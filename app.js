@@ -978,11 +978,30 @@ function answer(picked) {
     });
   }
 
+  // 附上中文對照。Part 5 用題目本身、Part 6 取短文中含該空格的那一句；
+  // Part 7 的英文題目就在畫面上方，不必重複，只顯示題目與正解的中譯
+  let sentence = '';
+  if (item.part === 7) {
+    if (item.zh) {
+      sentence = `<div class="fb-zh">題目：${esc(item.zh)}</div>` +
+                 (item.zhAnswer ? `<div class="fb-zh">正解：${esc(item.zhAnswer)}</div>` : '');
+    }
+  } else {
+    const full = item.en || (item.question.includes('____')
+      ? item.question.replace('____', item.options[item.answer]) : '');
+    if (full) {
+      sentence = `<div class="fb-sentence">${esc(full)}</div>` +
+                 (item.zh ? `<div class="fb-zh">${esc(item.zh)}</div>` : '');
+    }
+  }
+
   const fb = $('quizFeedback');
   fb.className = 'quiz-feedback ' + (correct ? 'ok' : 'bad');
-  fb.innerHTML = correct
-    ? `<span class="tag">✓ 答對了！</span>${item.explain}`
-    : `<span class="tag">✗ 答錯了</span>正確答案：<strong>${item.options[item.answer]}</strong><br>${item.explain}`;
+  fb.innerHTML = (correct
+    ? `<span class="tag">✓ 答對了！</span>`
+    : `<span class="tag">✗ 答錯了</span>正確答案：<strong>${esc(item.options[item.answer])}</strong>`)
+    + sentence
+    + `<div class="fb-explain">${item.explain}</div>`;
 
   $('quizScore').textContent = `答對 ${q.score} 題`;
   $('nextQuestion').classList.remove('hidden');

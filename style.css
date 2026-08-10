@@ -341,6 +341,16 @@ button{font:inherit;cursor:pointer;border-radius:10px;transition:.15s}
 .quiz-feedback.ok{border-left-color:var(--ok)}
 .quiz-feedback.bad{border-left-color:var(--bad)}
 .quiz-feedback .tag{font-weight:700;margin-right:6px}
+.fb-sentence{
+  margin-top:10px;padding-left:12px;border-left:2px solid var(--line);
+  font-size:15px;line-height:1.7;
+}
+.fb-zh{
+  padding-left:12px;border-left:2px solid var(--line);
+  font-size:14px;color:var(--muted);line-height:1.8;
+}
+.fb-zh:first-child{margin-top:10px}
+.fb-explain{margin-top:10px}
 #nextQuestion{margin-top:16px}
 
 .score-ring{
