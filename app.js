@@ -67,6 +67,7 @@ function loadProfiles() {
 
 function saveProfiles(p) {
   localStorage.setItem(PROFILE_KEY, JSON.stringify(p));
+  scheduleBackup();   // 所有進度變動最後都會經過這裡，備份掛在這一點就不會漏
 }
 
 function activeSlot() {
@@ -195,7 +196,291 @@ function deleteProfile(id) {
 
 function refreshHome() {
   renderProfiles();
+  renderBackupBar();
   renderHome();
+}
+
+/* ============================================================
+   備份：匯出檔案 / 匯入還原 / 連結備份檔（自動寫入）
+   ------------------------------------------------------------
+   「連結備份檔」用 File System Access API，只有 Chrome / Edge 支援。
+   瀏覽器不允許網頁無條件寫入硬碟，所以必須由使用者親手指定檔案；
+   權限也不跨工作階段延續，重開頁面要再點一次授權。
+   ============================================================ */
+const FS_SUPPORTED = typeof window.showSaveFilePicker === 'function';
+let backupHandle = null;      // 已連結的檔案代號
+let backupNeedsPermission = false;
+let backupLastWrite = '';
+let backupTimer = null;
+let backupError = '';
+
+function backupPayload() {
+  return {
+    app: 'english-trainer',
+    format: 2,
+    exportedAt: new Date().toISOString(),
+    profiles: loadProfiles()
+  };
+}
+
+function stamp() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+}
+
+/* --- 匯出 --- */
+function exportBackup() {
+  const blob = new Blob([JSON.stringify(backupPayload(), null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `english-trainer-progress-${stamp()}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/* --- 匯入 --- */
+function parseBackup(text) {
+  const data = JSON.parse(text);
+  const slots = data && data.profiles && data.profiles.slots;
+  if (!Array.isArray(slots)) throw new Error('這個檔案不是本程式匯出的備份');
+  slots.forEach((s) => {
+    if (typeof s.name !== 'string' || typeof s.data !== 'object') {
+      throw new Error('備份內容格式不正確');
+    }
+  });
+  return slots;
+}
+
+function importMerge(slots) {
+  const p = loadProfiles();
+  const existingNames = p.slots.map((s) => s.name);
+  // 一律以新項目加入，永遠不覆蓋現有的人，避免匯入把別人的進度洗掉
+  slots.forEach((s) => {
+    let name = s.name;
+    if (existingNames.includes(name)) name = name + '（匯入）';
+    existingNames.push(name);
+    p.slots.push({ id: newProfileId(), name: name, data: s.data || {} });
+  });
+  saveProfiles(p);
+  refreshHome();
+}
+
+function importReplace(slots) {
+  const p = { activeId: null, slots: slots.map((s) => ({ id: newProfileId(), name: s.name, data: s.data || {} })) };
+  saveProfiles(p);
+  state.pickerOpen = false;
+  refreshHome();
+}
+
+function askImportMode(fileName, slots) {
+  const names = slots.map((s) => s.name).join('、') || '（無）';
+  const panel = el(`
+    <div class="import-panel">
+      <div class="import-title">匯入 ${esc(fileName)}</div>
+      <div class="import-info">檔案中有 <b>${slots.length}</b> 位學習者：${esc(names)}</div>
+      <div class="import-actions">
+        <button class="mini-btn merge-btn">合併（保留現有，另外加入）</button>
+        <button class="mini-btn danger replace-btn">覆蓋（清空後全部換成檔案內容）</button>
+        <button class="mini-btn cancel-import">取消</button>
+      </div>
+    </div>`);
+  panel.querySelector('.merge-btn').onclick = () => importMerge(slots);
+  panel.querySelector('.replace-btn').onclick = () => {
+    if (!confirm('覆蓋會刪除目前所有學習者與進度，無法復原。確定要繼續嗎？')) return;
+    importReplace(slots);
+  };
+  panel.querySelector('.cancel-import').onclick = () => refreshHome();
+  $('backupBar').appendChild(panel);
+}
+
+function handleImportFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const slots = parseBackup(reader.result);
+      renderBackupBar();
+      askImportMode(file.name, slots);
+    } catch (e) {
+      backupError = '匯入失敗：' + e.message;
+      renderBackupBar();
+    }
+  };
+  reader.onerror = () => { backupError = '讀取檔案失敗'; renderBackupBar(); };
+  reader.readAsText(file);
+}
+
+/* --- IndexedDB：記住上次連結的檔案（file:// 下可能不可用，故全部包 try） --- */
+function idbOpen() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open('englishTrainerFS', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('handles');
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+async function idbPut(key, val) {
+  const db = await idbOpen();
+  return new Promise((res, rej) => {
+    const t = db.transaction('handles', 'readwrite');
+    t.objectStore('handles').put(val, key);
+    t.oncomplete = () => res();
+    t.onerror = () => rej(t.error);
+  });
+}
+async function idbGet(key) {
+  const db = await idbOpen();
+  return new Promise((res, rej) => {
+    const t = db.transaction('handles', 'readonly');
+    const q = t.objectStore('handles').get(key);
+    q.onsuccess = () => res(q.result);
+    q.onerror = () => rej(q.error);
+  });
+}
+async function idbDel(key) {
+  const db = await idbOpen();
+  return new Promise((res, rej) => {
+    const t = db.transaction('handles', 'readwrite');
+    t.objectStore('handles').delete(key);
+    t.oncomplete = () => res();
+    t.onerror = () => rej(t.error);
+  });
+}
+
+/* --- 連結備份檔 --- */
+async function linkBackupFile() {
+  backupError = '';
+  try {
+    backupHandle = await window.showSaveFilePicker({
+      suggestedName: `english-trainer-progress.json`,
+      types: [{ description: 'JSON 備份檔', accept: { 'application/json': ['.json'] } }]
+    });
+    backupNeedsPermission = false;
+    try { await idbPut('backupFile', backupHandle); } catch (e) { /* file:// 可能不允許，改為只在本次有效 */ }
+    await writeBackup();
+  } catch (e) {
+    if (e && e.name === 'AbortError') return;   // 使用者自己取消選檔
+    backupError = '無法連結備份檔：' + (e && e.message ? e.message : e);
+  }
+  renderBackupBar();
+}
+
+async function resumeBackupPermission() {
+  if (!backupHandle) return;
+  try {
+    const perm = await backupHandle.requestPermission({ mode: 'readwrite' });
+    if (perm === 'granted') {
+      backupNeedsPermission = false;
+      await writeBackup();
+    }
+  } catch (e) {
+    backupError = '取得寫入權限失敗';
+  }
+  renderBackupBar();
+}
+
+async function unlinkBackupFile() {
+  backupHandle = null;
+  backupNeedsPermission = false;
+  backupLastWrite = '';
+  try { await idbDel('backupFile'); } catch (e) { /* 忽略 */ }
+  renderBackupBar();
+}
+
+async function writeBackup() {
+  if (!backupHandle) return;
+  try {
+    const perm = await backupHandle.queryPermission({ mode: 'readwrite' });
+    if (perm !== 'granted') { backupNeedsPermission = true; renderBackupBar(); return; }
+    const w = await backupHandle.createWritable();
+    await w.write(JSON.stringify(backupPayload(), null, 2));
+    await w.close();
+    const d = new Date();
+    backupLastWrite = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+    backupError = '';
+  } catch (e) {
+    backupError = '寫入備份檔失敗：' + (e && e.message ? e.message : e);
+  }
+  renderBackupBar();
+}
+
+// 連續作答時不要每一下都寫檔，稍作延遲合併成一次
+function scheduleBackup() {
+  if (!backupHandle) return;
+  clearTimeout(backupTimer);
+  backupTimer = setTimeout(writeBackup, 800);
+}
+
+async function restoreBackupLink() {
+  if (!FS_SUPPORTED) return;
+  try {
+    const h = await idbGet('backupFile');
+    if (!h) return;
+    backupHandle = h;
+    const perm = await h.queryPermission({ mode: 'readwrite' });
+    backupNeedsPermission = perm !== 'granted';
+    renderBackupBar();
+  } catch (e) { /* 沒有可還原的連結 */ }
+}
+
+/* --- 備份區塊的畫面 --- */
+function renderBackupBar() {
+  const bar = $('backupBar');
+  bar.innerHTML = '';
+
+  let linkHtml = '';
+  if (FS_SUPPORTED) {
+    if (!backupHandle) {
+      linkHtml = '<button class="mini-btn link-btn">連結備份檔（自動儲存）</button>';
+    } else if (backupNeedsPermission) {
+      linkHtml = `<button class="mini-btn resume-btn">繼續備份到 ${esc(backupHandle.name)}</button>
+                  <button class="mini-btn unlink-btn">解除連結</button>`;
+    } else {
+      linkHtml = `<button class="mini-btn now-btn">立即備份</button>
+                  <button class="mini-btn unlink-btn">解除連結</button>`;
+    }
+  }
+
+  const box = el(`
+    <div class="backup-box">
+      <div class="backup-row">
+        <span class="backup-label">進度備份</span>
+        <button class="mini-btn export-btn">匯出備份</button>
+        <button class="mini-btn import-btn">匯入還原</button>
+        ${linkHtml}
+      </div>
+      <div class="backup-status"></div>
+    </div>`);
+
+  const status = box.querySelector('.backup-status');
+  if (backupError) {
+    status.className = 'backup-status bad';
+    status.textContent = backupError;
+  } else if (backupHandle && backupNeedsPermission) {
+    status.className = 'backup-status warn';
+    status.textContent = `已記住備份檔 ${backupHandle.name}，點上方按鈕恢復自動儲存（瀏覽器每次開啟都需要重新授權一次）`;
+  } else if (backupHandle) {
+    status.className = 'backup-status ok';
+    status.textContent = `● 自動備份中 → ${backupHandle.name}` + (backupLastWrite ? `　最後寫入 ${backupLastWrite}` : '');
+  } else {
+    status.className = 'backup-status';
+    status.textContent = FS_SUPPORTED
+      ? '進度只存在這台裝置的瀏覽器。連結備份檔後，每次變動都會自動寫入你指定的檔案。'
+      : '進度只存在這台裝置的瀏覽器。此瀏覽器不支援自動存檔，請用「匯出備份」手動保存。';
+  }
+
+  box.querySelector('.export-btn').onclick = exportBackup;
+  box.querySelector('.import-btn').onclick = () => { backupError = ''; $('importFile').click(); };
+  const q = (c) => box.querySelector(c);
+  if (q('.link-btn')) q('.link-btn').onclick = linkBackupFile;
+  if (q('.resume-btn')) q('.resume-btn').onclick = resumeBackupPermission;
+  if (q('.now-btn')) q('.now-btn').onclick = writeBackup;
+  if (q('.unlink-btn')) q('.unlink-btn').onclick = unlinkBackupFile;
+
+  bar.appendChild(box);
 }
 
 /* --- 畫面 --- */
@@ -794,7 +1079,15 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+$('importFile').onchange = (e) => {
+  const f = e.target.files && e.target.files[0];
+  e.target.value = '';            // 清空才能重複選同一個檔案
+  if (f) handleImportFile(f);
+};
+
 /* ---------------- 啟動 ---------------- */
 $('btnHome').style.visibility = 'hidden';
 renderProfiles();
+renderBackupBar();
 renderHome();
+restoreBackupLink();
