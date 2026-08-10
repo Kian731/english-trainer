@@ -56,36 +56,82 @@ button{font:inherit;cursor:pointer;border-radius:10px;transition:.15s}
 }
 .ghost-btn:hover{border-color:var(--accent);color:var(--text)}
 
-/* ---------- 學習者記錄卡 ---------- */
-.profile-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:14px}
-.profile-head .view-title{margin-bottom:0}
-.profile-hint{font-size:12px;color:var(--muted)}
-.profile-cards{
-  display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
-  gap:12px;margin-bottom:34px;
-}
+/* ---------- 學習者記錄 ---------- */
+.profile-area{margin-bottom:34px}
 .profile-card{
-  background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;
-  display:flex;flex-direction:column;gap:8px;
+  background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;
+  display:flex;flex-direction:column;gap:10px;
 }
 .profile-card.active{border-color:var(--accent);background:var(--card-2)}
-.profile-top{display:flex;align-items:center;gap:8px}
-.profile-name{
-  flex:1;min-width:0;background:var(--bg-soft);border:1px solid var(--line);
-  border-radius:8px;color:var(--text);font:inherit;font-size:15px;font-weight:600;
-  padding:6px 10px;
+.profile-top{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.profile-id{flex:1;min-width:0}
+.who-label{display:block;font-size:11px;color:var(--muted);letter-spacing:.5px}
+.profile-name-view{font-size:20px;font-weight:700;word-break:break-word}
+.switch-btn{
+  flex:none;background:transparent;border:1px solid var(--accent);color:var(--accent);
+  padding:8px 16px;font-size:13px;font-weight:600;
 }
-.profile-name:focus{outline:none;border-color:var(--accent)}
+.switch-btn:hover{background:var(--accent);color:#fff}
+.rename-box{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:2px}
+.rename-input{
+  flex:1;min-width:140px;background:var(--bg-soft);border:1px solid var(--accent);
+  border-radius:8px;color:var(--text);font:inherit;font-size:17px;font-weight:600;padding:6px 10px;
+}
+.rename-input:focus{outline:none}
 .using-tag{
   flex:none;font-size:11px;color:#0f1220;background:var(--ok);
   border-radius:99px;padding:2px 9px;font-weight:700;
 }
+
+/* 未選擇學習者時的提示卡 */
+.choose-card{
+  background:var(--card);border:1px dashed var(--line);border-radius:12px;
+  padding:28px 24px;text-align:center;
+}
+.choose-title{font-size:20px;font-weight:700;margin-bottom:8px}
+.choose-text{font-size:13px;color:var(--muted);margin-bottom:16px}
+
+/* 切換面板 */
+.picker{
+  background:var(--card);border:1px solid var(--accent);border-radius:12px;
+  padding:14px 16px;margin-top:10px;
+}
+.picker-title{font-size:13px;color:var(--muted);margin-bottom:10px}
+.picker-list{display:flex;flex-direction:column;gap:6px}
+.picker-row{display:flex;gap:6px;align-items:stretch}
+.picker-pick{
+  flex:1;min-width:0;background:var(--bg-soft);border:1px solid var(--line);color:var(--text);
+  padding:10px 14px;text-align:left;display:flex;justify-content:space-between;
+  align-items:center;gap:10px;flex-wrap:wrap;font-size:14px;
+}
+.picker-pick:hover{border-color:var(--accent)}
+.picker-row.current .picker-pick{border-color:var(--accent);background:var(--card-2)}
+.picker-name{font-weight:600}
+.picker-pct{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.picker-del{
+  flex:none;width:38px;background:transparent;border:1px solid var(--line);color:var(--muted);
+  font-size:13px;
+}
+.picker-del:hover{border-color:var(--bad);color:var(--bad)}
+.picker-none{font-size:13px;color:var(--muted);padding:10px 2px}
+.picker-add{display:flex;gap:8px;margin-top:12px}
+.add-input{
+  flex:1;min-width:0;background:var(--bg-soft);border:1px solid var(--line);
+  border-radius:8px;color:var(--text);font:inherit;font-size:14px;padding:8px 12px;
+}
+.add-input:focus{outline:none;border-color:var(--accent)}
+.picker-add .mini-btn{flex:none;padding:8px 16px}
+.picker-close{
+  width:100%;margin-top:12px;background:transparent;border:none;
+  color:var(--muted);font-size:12px;padding:6px;
+}
+.picker-close:hover{color:var(--text)}
 .profile-bar{height:5px;background:var(--bg-soft);border-radius:99px;overflow:hidden}
 .profile-bar-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent-2));transition:width .4s}
 .profile-stat{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
 .profile-stat b{color:var(--text);font-size:14px}
 .profile-sub{opacity:.8}
-.profile-actions{display:flex;gap:8px;margin-top:2px}
+.profile-actions{display:flex;gap:8px;margin-top:2px;flex-wrap:wrap}
 .mini-btn{
   flex:1;background:transparent;border:1px solid var(--line);color:var(--muted);
   padding:6px 10px;font-size:12px;

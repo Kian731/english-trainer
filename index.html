@@ -23,15 +23,13 @@
 
   <!-- ===== 等級選擇 ===== -->
   <section id="viewHome" class="view">
-    <div class="profile-head">
-      <h2 class="view-title">學習者記錄</h2>
-      <span class="profile-hint">可建立三組獨立進度，點「讀取進度」切換</span>
-    </div>
-    <div id="profileCards" class="profile-cards"></div>
+    <div id="profileArea" class="profile-area"></div>
 
-    <h2 class="view-title">選擇你的學習等級</h2>
-    <div id="levelCards" class="level-cards"></div>
-    <div class="hint">學習進度會自動儲存在這台電腦的瀏覽器裡，關閉瀏覽器不會消失。</div>
+    <div id="levelSection">
+      <h2 class="view-title">選擇你的學習等級</h2>
+      <div id="levelCards" class="level-cards"></div>
+      <div class="hint">學習進度會自動儲存在這台電腦的瀏覽器裡，關閉瀏覽器不會消失。</div>
+    </div>
   </section>
 
   <!-- ===== 學習 / 測驗 ===== -->
@@ -134,7 +132,6 @@
 
 </main>
 
-<footer class="foot">離線可用 · 開啟 index.html 即可使用</footer>
 
 <script src="data/basic-words.js"></script>
 <script src="data/basic-grammar.js"></script>

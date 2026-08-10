@@ -2,38 +2,66 @@
 
 const $ = (id) => document.getElementById(id);
 
-const PROFILE_KEY = 'englishTrainerProfiles.v1';
-const LEGACY_KEY = 'englishTrainerProgress.v1';   // 舊版單一進度，會自動搬到第一組
-const PROFILE_COUNT = 3;
+const PROFILE_KEY = 'englishTrainerProfiles.v2';
+const LEGACY_V1_KEY = 'englishTrainerProfiles.v1';  // 舊版：固定三組、以索引記錄
+const LEGACY_V0_KEY = 'englishTrainerProgress.v1';  // 更舊版：只有單一份進度
 
 const state = {
   level: null,       // 目前等級 key
   wordIndex: 0,      // 目前單字卡索引
   quiz: null,        // 進行中的測驗
   roundSize: 10,     // 每回合題數（0 = 全部）
-  parts: [5, 6, 7]   // 要出題的 Part
+  parts: [5, 6, 7],  // 要出題的 Part
+  pickerOpen: false, // 切換學習者的面板是否展開
+  renaming: false    // 是否處於改名模式
 };
 
-/* ---------------- 學習者記錄（3 組） ---------------- */
-function blankProfile(i) {
-  return { name: `學習者 ${i + 1}`, data: {} };
+/* ---------------- 學習者記錄（數量不限） ---------------- */
+let idSeq = 0;
+function newProfileId() {
+  idSeq += 1;
+  return 'p' + Date.now().toString(36) + '-' + idSeq;
+}
+
+function hasAnyProgress(data) {
+  return LEVEL_ORDER.some((k) => {
+    const d = data && data[k];
+    if (!d) return false;
+    return (d.learned || []).length || (d.grammarRead || []).length ||
+           (d.correct || []).length || d.best;
+  });
 }
 
 function loadProfiles() {
   let p = null;
   try { p = JSON.parse(localStorage.getItem(PROFILE_KEY)); } catch (e) { p = null; }
 
-  if (!p || !Array.isArray(p.slots)) {
-    p = { active: 0, slots: [] };
-    for (let i = 0; i < PROFILE_COUNT; i++) p.slots.push(blankProfile(i));
-    // 舊版只有一份進度，開檔時自動搬進第一組，不讓使用者的紀錄消失
-    try {
-      const legacy = JSON.parse(localStorage.getItem(LEGACY_KEY));
-      if (legacy) p.slots[0].data = legacy;
-    } catch (e) { /* 沒有舊資料就略過 */ }
+  if (p && Array.isArray(p.slots)) {
+    // 指向已刪除的學習者時視為未選擇
+    if (!p.slots.some((s) => s.id === p.activeId)) p.activeId = null;
+    return p;
   }
-  while (p.slots.length < PROFILE_COUNT) p.slots.push(blankProfile(p.slots.length));
-  if (!(p.active >= 0 && p.active < PROFILE_COUNT)) p.active = 0;
+
+  // 從舊版搬移。只留下真的有進度或有自訂名稱的，避免帶進三個空殼
+  p = { activeId: null, slots: [] };
+  try {
+    const v1 = JSON.parse(localStorage.getItem(LEGACY_V1_KEY));
+    if (v1 && Array.isArray(v1.slots)) {
+      v1.slots.forEach((s, i) => {
+        const named = s.name && !/^學習者 \d+$/.test(s.name);
+        if (hasAnyProgress(s.data) || named) {
+          p.slots.push({ id: newProfileId(), name: s.name || `學習者 ${i + 1}`, data: s.data || {} });
+        }
+      });
+    }
+  } catch (e) { /* 沒有 v1 資料 */ }
+
+  if (!p.slots.length) {
+    try {
+      const v0 = JSON.parse(localStorage.getItem(LEGACY_V0_KEY));
+      if (hasAnyProgress(v0)) p.slots.push({ id: newProfileId(), name: '學習者 1', data: v0 });
+    } catch (e) { /* 沒有 v0 資料 */ }
+  }
   return p;
 }
 
@@ -41,14 +69,21 @@ function saveProfiles(p) {
   localStorage.setItem(PROFILE_KEY, JSON.stringify(p));
 }
 
-/* ---------------- 進度儲存（讀寫目前這一組） ---------------- */
-function loadProgress() {
+function activeSlot() {
   const p = loadProfiles();
-  return p.slots[p.active].data || {};
+  return p.slots.find((s) => s.id === p.activeId) || null;
+}
+
+/* ---------------- 進度儲存（讀寫目前選定的學習者） ---------------- */
+function loadProgress() {
+  const s = activeSlot();
+  return s ? (s.data || {}) : {};
 }
 function saveProgress(data) {
   const p = loadProfiles();
-  p.slots[p.active].data = data;
+  const s = p.slots.find((x) => x.id === p.activeId);
+  if (!s) return;   // 未選擇學習者時不寫入任何進度
+  s.data = data;
   saveProfiles(p);
 }
 function levelProgress(key) {
@@ -103,60 +138,196 @@ function profileStats(data) {
   return { done, total, pct: total ? Math.round((done / total) * 100) : 0 };
 }
 
-function renderProfiles() {
+/* --- 學習者的各項操作 --- */
+function selectProfile(id) {
   const p = loadProfiles();
-  $('activeName').textContent = p.slots[p.active].name;
+  p.activeId = id;
+  saveProfiles(p);
+  state.pickerOpen = false;
+  state.renaming = false;
+  refreshHome();
+}
 
-  const wrap = $('profileCards');
-  wrap.innerHTML = '';
-  p.slots.forEach((slot, i) => {
-    const s = profileStats(slot.data || {});
-    const active = i === p.active;
-    const card = document.createElement('div');
-    card.className = 'profile-card' + (active ? ' active' : '');
-    card.innerHTML = `
+function addProfile(rawName) {
+  const p = loadProfiles();
+  const name = (rawName || '').trim() || `學習者 ${p.slots.length + 1}`;
+  const slot = { id: newProfileId(), name: name, data: {} };
+  p.slots.push(slot);
+  p.activeId = slot.id;          // 新增後直接切換過去
+  saveProfiles(p);
+  state.pickerOpen = false;
+  refreshHome();
+}
+
+function renameActiveProfile(rawName) {
+  const name = (rawName || '').trim();
+  // 空白視同取消：保留原名並離開編輯狀態，不要卡在輸入框讓人以為當掉
+  if (!name) { state.renaming = false; refreshHome(); return; }
+  const p = loadProfiles();
+  const s = p.slots.find((x) => x.id === p.activeId);
+  if (!s) return;
+  s.name = name;
+  saveProfiles(p);
+  state.renaming = false;
+  refreshHome();
+}
+
+function clearActiveProgress() {
+  const p = loadProfiles();
+  const s = p.slots.find((x) => x.id === p.activeId);
+  if (!s) return;
+  if (!confirm(`確定要清除「${s.name}」的所有進度嗎？\n單字、語法與測驗紀錄都會歸零，此動作無法復原。`)) return;
+  s.data = {};
+  saveProfiles(p);
+  refreshHome();
+}
+
+function deleteProfile(id) {
+  const p = loadProfiles();
+  const s = p.slots.find((x) => x.id === id);
+  if (!s) return;
+  if (!confirm(`確定要刪除學習者「${s.name}」嗎？\n這會連同他的所有進度一起移除，無法復原。`)) return;
+  p.slots = p.slots.filter((x) => x.id !== id);
+  if (p.activeId === id) p.activeId = null;   // 刪掉的是自己，就回到未選擇狀態
+  saveProfiles(p);
+  refreshHome();
+}
+
+function refreshHome() {
+  renderProfiles();
+  renderHome();
+}
+
+/* --- 畫面 --- */
+function el(html) {
+  const d = document.createElement('div');
+  d.innerHTML = html.trim();
+  return d.firstElementChild;
+}
+
+function activeProfileCard(slot) {
+  const s = profileStats(slot.data || {});
+  const card = el(`
+    <div class="profile-card active">
       <div class="profile-top">
-        <input class="profile-name" type="text" maxlength="12" value="${esc(slot.name)}" aria-label="學習者名稱">
-        ${active ? '<span class="using-tag">使用中</span>' : ''}
+        <div class="profile-id">
+          <span class="who-label">目前學習者</span>
+          <div class="profile-name-view">${esc(slot.name)}</div>
+        </div>
+        <button class="switch-btn">切換學習者</button>
       </div>
       <div class="profile-bar"><div class="profile-bar-fill" style="width:${s.pct}%"></div></div>
       <div class="profile-stat">整體進度 <b>${s.pct}%</b>　<span class="profile-sub">${s.done} / ${s.total} 項</span></div>
       <div class="profile-actions">
-        <button class="mini-btn load-btn" ${active ? 'disabled' : ''}>${active ? '目前使用中' : '讀取進度'}</button>
-        <button class="mini-btn danger clear-btn">清除記錄</button>
+        <button class="mini-btn rename-btn">修改名稱</button>
+        <button class="mini-btn danger clear-btn">清除此學習者的進度</button>
+      </div>
+    </div>`);
+
+  card.querySelector('.switch-btn').onclick = () => {
+    state.pickerOpen = !state.pickerOpen;
+    state.renaming = false;
+    renderProfiles();
+  };
+  card.querySelector('.rename-btn').onclick = () => {
+    state.renaming = true;
+    state.pickerOpen = false;
+    renderProfiles();
+  };
+  card.querySelector('.clear-btn').onclick = clearActiveProgress;
+
+  // 改名模式：名稱平常是純文字，按下「修改名稱」才變成輸入框，
+  // 避免手滑打字就改掉別人的名字
+  if (state.renaming) {
+    const view = card.querySelector('.profile-name-view');
+    const box = el(`
+      <div class="rename-box">
+        <input class="rename-input" type="text" maxlength="16" value="${esc(slot.name)}" aria-label="學習者名稱">
+        <button class="mini-btn save-btn">儲存</button>
+        <button class="mini-btn cancel-btn">取消</button>
+      </div>`);
+    view.replaceWith(box);
+    const input = box.querySelector('.rename-input');
+    box.querySelector('.save-btn').onclick = () => renameActiveProfile(input.value);
+    box.querySelector('.cancel-btn').onclick = () => { state.renaming = false; renderProfiles(); };
+    input.onkeydown = (e) => {
+      if (e.key === 'Enter') renameActiveProfile(input.value);
+      if (e.key === 'Escape') { state.renaming = false; renderProfiles(); }
+    };
+    setTimeout(() => { input.focus(); input.select(); }, 0);
+  }
+  return card;
+}
+
+function choosePromptCard(p) {
+  const empty = p.slots.length === 0;
+  const card = el(`
+    <div class="choose-card">
+      <div class="choose-title">請選擇您的進度</div>
+      <p class="choose-text">
+        ${empty
+          ? '目前還沒有任何學習者，請先新增一位再開始學習。'
+          : '為避免使用到別人的紀錄，請先選擇您自己的學習者。'}
+      </p>
+      <button class="primary-btn big choose-btn">${empty ? '＋ 新增學習者' : '選擇學習者'}</button>
+    </div>`);
+  card.querySelector('.choose-btn').onclick = () => {
+    state.pickerOpen = true;
+    renderProfiles();
+  };
+  return card;
+}
+
+function pickerPanel(p) {
+  const rows = p.slots.map((slot) => {
+    const s = profileStats(slot.data || {});
+    const isActive = slot.id === p.activeId;
+    return `
+      <div class="picker-row${isActive ? ' current' : ''}" data-id="${slot.id}">
+        <button class="picker-pick">
+          <span class="picker-name">${esc(slot.name)}${isActive ? ' <span class="using-tag">目前</span>' : ''}</span>
+          <span class="picker-pct">${s.pct}%　<span class="profile-sub">${s.done} / ${s.total} 項</span></span>
+        </button>
+        <button class="picker-del" title="刪除這位學習者" aria-label="刪除 ${esc(slot.name)}">✕</button>
       </div>`;
+  }).join('');
 
-    const nameInput = card.querySelector('.profile-name');
-    const commitName = () => {
-      const all = loadProfiles();
-      const v = nameInput.value.trim();
-      all.slots[i].name = v || `學習者 ${i + 1}`;
-      saveProfiles(all);
-      renderProfiles();
-    };
-    nameInput.onchange = commitName;
-    nameInput.onkeydown = (e) => { if (e.key === 'Enter') nameInput.blur(); };
+  const panel = el(`
+    <div class="picker">
+      <div class="picker-title">選擇學習者</div>
+      <div class="picker-list">${rows || '<div class="picker-none">尚未建立任何學習者</div>'}</div>
+      <div class="picker-add">
+        <input class="add-input" type="text" maxlength="16" placeholder="輸入新學習者的名稱">
+        <button class="mini-btn add-btn">＋ 新增</button>
+      </div>
+      <button class="picker-close">關閉</button>
+    </div>`);
 
-    card.querySelector('.load-btn').onclick = () => {
-      const all = loadProfiles();
-      all.active = i;
-      saveProfiles(all);
-      renderProfiles();
-      renderHome();
-    };
-
-    card.querySelector('.clear-btn').onclick = () => {
-      const all = loadProfiles();
-      const name = all.slots[i].name;
-      if (!confirm(`確定要清除「${name}」的所有進度嗎？\n單字、語法與測驗紀錄都會歸零，此動作無法復原。`)) return;
-      all.slots[i].data = {};
-      saveProfiles(all);
-      renderProfiles();
-      renderHome();
-    };
-
-    wrap.appendChild(card);
+  panel.querySelectorAll('.picker-row').forEach((row) => {
+    const id = row.dataset.id;
+    row.querySelector('.picker-pick').onclick = () => selectProfile(id);
+    row.querySelector('.picker-del').onclick = (e) => { e.stopPropagation(); deleteProfile(id); };
   });
+  const addInput = panel.querySelector('.add-input');
+  panel.querySelector('.add-btn').onclick = () => addProfile(addInput.value);
+  addInput.onkeydown = (e) => { if (e.key === 'Enter') addProfile(addInput.value); };
+  panel.querySelector('.picker-close').onclick = () => { state.pickerOpen = false; renderProfiles(); };
+  return panel;
+}
+
+function renderProfiles() {
+  const p = loadProfiles();
+  const active = p.slots.find((s) => s.id === p.activeId) || null;
+
+  $('activeName').textContent = active ? active.name : '尚未選擇';
+
+  const area = $('profileArea');
+  area.innerHTML = '';
+  area.appendChild(active ? activeProfileCard(active) : choosePromptCard(p));
+  if (state.pickerOpen) area.appendChild(pickerPanel(p));
+
+  // 沒選學習者就不顯示等級卡，否則「先選進度」的防呆等於沒有作用
+  $('levelSection').classList.toggle('hidden', !active);
 }
 
 function renderHome() {
